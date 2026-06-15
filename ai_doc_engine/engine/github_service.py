@@ -20,7 +20,8 @@ class GitHubService:
         latest = commits[0]
         changed_files = []
         for file in latest.files:
-            if file.filename.endswith(('.py', '.sql')):
+            # 🚨 Added .java to ensure Spring Boot files are detected 🚨
+            if file.filename.endswith(('.py', '.sql', '.java')):
                 changed_files.append({
                     "filename": file.filename,
                     "status": file.status, # modified, added, removed

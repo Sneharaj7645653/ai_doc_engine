@@ -11,14 +11,13 @@ git_service = GitHubService()
 llm_service = LLMService()
 db = DocVectorStore()
 
-# We use the shared ChromaDB folder to pass messages to the UI
 UPDATES_FILE = "/app/chroma_db/pending_updates.json"
 
 def process_webhook_commit():
-    """Background task to evaluate code changes and flag staleness."""
+    print("🔍 BACKGROUND TASK STARTED: Fetching latest commit...", flush=True)
     changes = git_service.get_latest_commit_diffs()
+    print(f"📦 Found {len(changes)} changed files in the latest commit.", flush=True)
     
-    # Load existing pending updates queue
     if os.path.exists(UPDATES_FILE):
         with open(UPDATES_FILE, "r") as f:
             try:
@@ -31,19 +30,22 @@ def process_webhook_commit():
     for change in changes:
         filename = change["filename"]
         patch = change["patch"]
+        print(f"📄 Checking file: {filename}", flush=True)
         
-        # 1. Fetch the old doc from ChromaDB using the filename as the ID
         try:
             result = db.collection.get(ids=[filename])
             old_doc = result['documents'][0] if result['documents'] else None
         except Exception:
             old_doc = None
         
-        if old_doc and patch:
-            # 2. Ask Llama 3 to analyze staleness and draft an update
+        if not old_doc:
+            print(f"⚠️ {filename} was not found in the Vector Database. Skipping.", flush=True)
+            continue
+            
+        if patch:
+            print(f"🧠 Sending {filename} to Llama 3.3 for staleness check...", flush=True)
             analysis = llm_service.detect_staleness_and_draft(old_doc, patch)
             
-            # 3. Parse the specific formatting requested in llm_service.py
             severity = "REVIEW_RECOMMENDED"
             updated_doc = analysis 
             
@@ -52,7 +54,8 @@ def process_webhook_commit():
                 severity = parts[0].replace("SEVERITY:", "").strip()
                 updated_doc = parts[1].strip()
             
-            # 4. Save to the queue if the documentation is affected
+            print(f"🤖 AI Verdict for {filename}: {severity}", flush=True)
+            
             if "SAFE" not in severity.upper():
                 pending_updates.append({
                     "filename": filename,
@@ -60,19 +63,22 @@ def process_webhook_commit():
                     "old_doc": old_doc,
                     "new_doc_draft": updated_doc
                 })
+                print(f"✅ Added {filename} to UI Review Queue.", flush=True)
     
-    # Write the updated flags back to the shared file
     with open(UPDATES_FILE, "w") as f:
         json.dump(pending_updates, f)
         
-    print(f"Processed {len(changes)} changes. Saved {len(pending_updates)} flags.")
+    print(f"🏁 Background task complete. Saved {len(pending_updates)} flags total.", flush=True)
 
 @app.post("/webhook/github")
 async def github_webhook(request: Request, background_tasks: BackgroundTasks):
     payload = await request.json()
-    # Trigger the background analysis when code is pushed
+    print("🔔 WEBHOOK RECEIVED from GitHub!", flush=True)
     if "commits" in payload:
+        print("✅ Push event detected. Triggering AI analysis...", flush=True)
         background_tasks.add_task(process_webhook_commit)
+    else:
+        print("ℹ️ Webhook received, but it wasn't a code push (commits array missing).", flush=True)
     return {"status": "Webhook received"}
 
 if __name__ == "__main__":
