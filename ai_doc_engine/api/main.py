@@ -1,63 +1,53 @@
 from fastapi import FastAPI, Request, BackgroundTasks
 import uvicorn
-import json
 from engine.github_service import GitHubService
 from engine.llm_service import LLMService
 from engine.rag_store import DocVectorStore
+from engine.models import StalenessFlag
+from engine.update_drafter import UpdateDrafter
 
 app = FastAPI(title="AI Doc Engine API")
 git_service = GitHubService()
 llm_service = LLMService()
 db = DocVectorStore()
+drafter = UpdateDrafter(llm_service)
+
 
 def process_webhook_commit():
     print("🔍 BACKGROUND TASK STARTED: Fetching latest commit...", flush=True)
     changes = git_service.get_latest_commit_diffs()
     print(f"📦 Found {len(changes)} changed files in the latest commit.", flush=True)
-    
-    # Fetch queue directly from Pinecone
+
     pending_updates = db.get_queue()
 
     for change in changes:
         filename = change["filename"]
-        patch = change["patch"]
+        patch = change.get("patch", "")
         print(f"📄 Checking file: {filename}", flush=True)
-        
+
         old_doc = db.get_doc(filename)
-        
         if not old_doc:
-            print(f"⚠️ {filename} was not found in the Vector Database. Skipping.", flush=True)
+            print(f"⚠️  {filename} not found in Vector DB. Skipping.", flush=True)
             continue
-            
-        if patch:
-            print(f"🧠 Sending {filename} to Llama 3.3 for staleness check...", flush=True)
-            analysis = llm_service.detect_staleness_and_draft(old_doc, patch)
-            
-            severity = "REVIEW_RECOMMENDED"
-            updated_doc = analysis 
-            
-            if "SEVERITY:" in analysis and "UPDATED_DOC:" in analysis:
-                parts = analysis.split("UPDATED_DOC:")
-                severity = parts[0].replace("SEVERITY:", "").strip()
-                updated_doc = parts[1].strip()
-            
-            print(f"🤖 AI Verdict for {filename}: {severity}", flush=True)
-            
-            if "SAFE" not in severity.upper():
-                # Remove duplicate entries for the same file if they exist
-                pending_updates = [item for item in pending_updates if item["filename"] != filename]
-                
-                pending_updates.append({
-                    "filename": filename,
-                    "severity": severity,
-                    "old_doc": old_doc,
-                    "new_doc_draft": updated_doc
-                })
-                print(f"✅ Added {filename} to UI Review Queue.", flush=True)
-    
-    # Save queue back to Pinecone
+
+        if not patch:
+            continue
+
+        print(f"🧠 Drafting update for {filename}...", flush=True)
+        flag = StalenessFlag(filename=filename, patch=patch, old_doc=old_doc)
+        draft = drafter.draft(flag)
+
+        print(f"🤖 AI Verdict for {filename}: {draft.severity}", flush=True)
+
+        if "SAFE" not in draft.severity.upper():
+            # Deduplicate: remove any existing entry for this file
+            pending_updates = [u for u in pending_updates if u["filename"] != filename]
+            pending_updates.append(draft.to_dict())
+            print(f"✅ Added {filename} to UI Review Queue.", flush=True)
+
     db.save_queue(pending_updates)
-    print(f"🏁 Background task complete. Saved {len(pending_updates)} flags total.", flush=True)
+    print(f"🏁 Background task complete. Queue size: {len(pending_updates)}.", flush=True)
+
 
 @app.post("/webhook/github")
 async def github_webhook(request: Request, background_tasks: BackgroundTasks):
@@ -67,8 +57,9 @@ async def github_webhook(request: Request, background_tasks: BackgroundTasks):
         print("✅ Push event detected. Triggering AI analysis...", flush=True)
         background_tasks.add_task(process_webhook_commit)
     else:
-        print("ℹ️ Webhook received, but it wasn't a code push (commits array missing).", flush=True)
+        print("ℹ️  Webhook received, but no commits array found.", flush=True)
     return {"status": "Webhook received"}
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
