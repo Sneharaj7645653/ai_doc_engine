@@ -1,4 +1,5 @@
 import os
+import json
 from pinecone import Pinecone, ServerlessSpec
 from dotenv import load_dotenv
 
@@ -53,6 +54,7 @@ class DocVectorStore:
                 "metadata": {"text": content}
             }]
         )
+
     def search(self, query, top_k=3):
         """Embeds the user chat query and searches Pinecone for relevant docs."""
         try:
@@ -82,3 +84,24 @@ class DocVectorStore:
         except Exception as e:
             print(f"Error during Pinecone search: {e}", flush=True)
             return []
+
+    # --- NEW CLOUD QUEUE FUNCTIONS ---
+    def get_queue(self):
+        """Fetches the pending updates queue from Pinecone."""
+        try:
+            response = self.index.fetch(ids=["SYSTEM_QUEUE"])
+            if response and 'vectors' in response and "SYSTEM_QUEUE" in response['vectors']:
+                return json.loads(response['vectors']['SYSTEM_QUEUE']['metadata']['text'])
+        except Exception:
+            pass
+        return []
+
+    def save_queue(self, queue_list):
+        """Saves the pending updates queue into Pinecone."""
+        self.index.upsert(
+            vectors=[{
+                "id": "SYSTEM_QUEUE", 
+                "values": [0.0] * 1024, # Matches the dimension of the index
+                "metadata": {"text": json.dumps(queue_list)}
+            }]
+        )
