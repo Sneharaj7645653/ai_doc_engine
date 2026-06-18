@@ -1,0 +1,10 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+pinecone
+fastapi
+uvicorn
+streamlit
+groq
+python-dotenv
+requests
+pydantic
+PyGithub
