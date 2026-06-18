@@ -19,3 +19,9 @@ EXPOSE 8000 8501
 # Command to run both services using a shell script or directly via CMD. 
 # For Docker Compose, we override this CMD.
 CMD ["bash"]
+
+COPY start.sh /app/start.sh
+RUN chmod +x /app/start.sh
+
+# Run the script when the container boots
+CMD ["/app/start.sh"]

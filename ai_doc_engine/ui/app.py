@@ -16,7 +16,7 @@ llm = LLMService()
 db = DocVectorStore()
 git_service = GitHubService()
 
-UPDATES_FILE = "/app/chroma_db/pending_updates.json"
+UPDATES_FILE = "/app/data/pending_updates.json"
 
 st.title("📖 AI-Powered Developer Docs")
 
